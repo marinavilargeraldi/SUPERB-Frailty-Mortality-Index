@@ -1,3 +1,114 @@
-Survival analysis
+# -------------------------------------------------------------
+# Survival Analysis Script
+# Purpose: Run Cox proportional hazards models for multiple outcomes
+# -------------------------------------------------------------
+
+# Load required packages
+  library(survival)
+  library(writexl)
+  library(dplyr)
+
+# ----------------------- Inputs -------------------------
+# File paths
+file_path   <- "data/input_dataset.csv"
+output_path <- "results/cox_regression_results.xlsx"
+
+# Read data
+data <- read.csv(file_path, header = TRUE)
+
+# Define adjustment variables
+adjustment_vars <- c("Age", "BMI","Education", "Smoking", "Alcohol", 
+                     "statins", "PPI", "Metformin")
+
+# Split into numeric and categorical
+categorical_vars <- c("Education", "Smoking", "Alcohol", "statins", "PPI", "Metformin")
+numeric_vars     <- setdiff(adjustment_vars, categorical_vars)
+
+# Convert appropriately
+data[categorical_vars] <- lapply(data[categorical_vars], as.factor)
+data[numeric_vars]     <- lapply(data[numeric_vars], as.numeric)
+
+# Define survival outcomes
+outcomes <- list(
+  Death = list(outcome_var = "death_binary", time_var = "death_days_to"),
+  Hip_Fracture = list(outcome_var = "hip_fracture_binary", time_var = "hip_fracture_days_to"),
+  Fall_Injuries = list(outcome_var = "fallinj_binary", time_var = "fallinj_days_to")
+)
+
+# Define bacterial species or other independent variables
+# select columns by name or column number
+species_vars <- c("Species1", "Species2")  # e.g., c("BactA","BactB") or column indices c(50:2186)
+
+# ----------------------- Functions ---------------------------
+#' Run Cox regression for one outcome across multiple species
+#' @param data Input dataframe
+#' @param outcome_var Name of the binary outcome variable
+#' @param time_var Name of the survival time variable
+#' @param species_vars Vector of species / independent variables (names or column numbers)
+#' @param adjustment_vars Vector of covariates
+#' @return Data frame with Cox regression results
+run_cox <- function(data, outcome_var, time_var, species_vars, adjustment_vars) {
+  
+  results <- data.frame(
+    Outcome = character(),
+    Species = character(),
+    Hazard_Ratio = numeric(),
+    CI_95_Lower = numeric(),
+    CI_95_Upper = numeric(),
+    P_value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (var in species_vars) {
+    # Skip species with no variation
+    if(length(unique(data[[var]])) <= 1) next
+    
+    formula <- as.formula(
+      paste("Surv(", time_var, ",", outcome_var, ") ~", var, "+", 
+            paste(adjustment_vars, collapse = " + "))
+    )
+    
+    complete_data <- na.omit(data[, c(time_var, outcome_var, var, adjustment_vars)])
+    
+    cox_model <- tryCatch(coxph(formula, data = complete_data), error = function(e) NULL)
+    
+    if (!is.null(cox_model)) {
+      summary_cox <- summary(cox_model)
+      
+      if (var %in% rownames(summary_cox$coefficients)) {
+        coef_info <- summary_cox$coefficients[var, ]
+        conf_int <- summary_cox$conf.int[var, c("lower .95", "upper .95")]
+        
+        results <- rbind(results, data.frame(
+          Outcome = outcome_var,
+          Species = var,
+          Hazard_Ratio = coef_info["exp(coef)"],
+          CI_95_Lower = conf_int[1],
+          CI_95_Upper = conf_int[2],
+          P_value = coef_info["Pr(>|z|)"]
+        ))
+      }
+    }
+  }
+  
+  return(results)
+}
+
+# ----------------------- Main Script -------------------------
+# Store results for all outcomes
+results_list <- list()
+
+for (outcome_name in names(outcomes)) {
+  outcome_info <- outcomes[[outcome_name]]
+  results <- run_cox(data,
+                     outcome_var = outcome_info$outcome_var,
+                     time_var = outcome_info$time_var,
+                     species_vars = species_vars,
+                     adjustment_vars = adjustment_vars)
+  results_list[[outcome_name]] <- results
+}
+
+# Export results
+write_xlsx(results_list, output_path)
 
 
