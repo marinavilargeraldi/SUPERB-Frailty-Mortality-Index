@@ -1,3 +1,130 @@
-Diverisity analysis
+# -------------------------------------------------------------
+# Microbiome Diversity Analysis Script
+# Purpose: Calculate alpha diversity and beta diversity (Euclidean distance) for species data. Run pairwise PERMANOVA (adonis) for beta diversity. Vizualize beta diversity via PCoA
+# -------------------------------------------------------------
 
+# Load required packages
+library(vegan)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(writexl)
+
+# ----------------------- Inputs -------------------------
+# File path
+file_path <- "data/input_dataset.csv"
+
+# Read dataset
+dataset <- read.csv(file_path, header = TRUE)
+
+# Specify metadata and species columns
+metadata_cols <- c("SampleID", "Age", "BMI", "Sex")  # user specifies metadata columns
+species_cols  <- setdiff(colnames(dataset), metadata_cols)
+
+# Subset data
+metadata     <- dataset[, metadata_cols]
+species_data <- dataset[, species_cols]
+
+# ----------------------- Alpha diversity -----------------------
+#' Calculate alpha diversity metrics for species data
+#' @param species_data Data frame with species abundances (samples × species)
+#' @return Data frame with Shannon, Simpson, inverse Simpson, and richness
+alpha_vegan <- function(species_data) {
+  shannon    <- vegan::diversity(species_data, index = "shannon")
+  simpson    <- vegan::diversity(species_data, index = "simpson")
+  invsimpson <- vegan::diversity(species_data, index = "invsimpson")
+  richness   <- rowSums(species_data > 0, na.rm = TRUE)
+  
+  alpha <- data.frame(shannon, simpson, invsimpson, richness)
+  return(alpha)
+}
+
+# Calculate alpha diversity
+alpha_species <- alpha_vegan(species_data)
+
+# ----------------------- Beta Diversity -----------------------
+# File path
+file_path <- "data/input_dataset.csv"
+
+# Read dataset
+dataset <- read.csv(file_path, header = TRUE, row.names = 1)
+
+# Specify metadata and species columns
+metadata_cols <- c("ID", "Age", "BMI")  # metadata columns
+species_cols  <- setdiff(colnames(dataset), metadata_cols)
+
+# Subset data
+metadata     <- dataset[, metadata_cols]
+species_data <- dataset[, species_cols] #CLR-transformed data
+
+# Ensure species data is numeric
+species_clr <- as.matrix(lapply(species_data, as.numeric))
+
+# ----------------------- Functions (beta diversity)-----------------------
+#' Calculate Euclidean distance (beta diversity) from species data
+#' @param species_clr Matrix or data frame with species abundances (CLR-transformed)
+#' @return Distance object (vegdist)
+calc_beta <- function(species_clr) {
+  dis_beta <- vegdist(species_clr, method = "euclidean")
+  return(dis_beta)
+}
+
+# Calculate beta diversity
+beta_distance <- calc_beta(species_clr)
+
+# ----------------------- pairwise PERMANOVA -----------------------
+#' Run pairwise PERMANOVA for beta diversity
+#' @param species_clr Data frame / matrix with species abundances
+#' @param group_factor Factor defining groups for comparison
+#' @param dist_method Distance metric (default: "euclidean")
+#' @param n_perm Number of permutations (default: 999)
+#' @return Data frame with pairwise PERMANOVA results
+run_pairwise_adonis <- function(species_clr, group_factor,
+                                dist_method = "euclidean", n_perm = 999) {
+  
+  result <- pairwise.adonis(
+    x = species_clr,
+    factors = group_factor,
+    sim.function = "vegdist",
+    sim.method = dist_method,
+    p.adjust.m = "none",
+    perm = n_perm
+  )
+  
+  return(result)
+}
+
+# ----------------------- PCoA ----------------------------
+# Principal Coordinates Analysis
+pcoa_res <- cmdscale(beta_distance, eig = TRUE, k = 2) # 2 axes
+pcoa_df <- data.frame(
+  SampleID = rownames(species_clr),
+  PC1      = pcoa_res$points[,1],
+  PC2      = pcoa_res$points[,2],
+  Group    = metadata$Group_Frailty_index
+)
+
+# ----------------------- Plot ----------------------------
+# Colors for groups
+frailty_cols <- c("#508786", "#FAF6CA", "#EA9F5F", "#B52430") # adjust as needed
+
+p <- ggplot(pcoa_df, aes(x = PC1, y = PC2, colour = Group, fill = Group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_colour_manual(values = frailty_cols) +
+  scale_fill_manual(values = frailty_cols) +
+  labs(
+    title  = "PCoA by FMI Group",
+    x      = "PC1",
+    y      = "PC2",
+    colour = "Frailty Group",
+    fill   = "Frailty Group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_line(colour = "grey90"),
+    panel.grid.minor = element_blank(),
+    plot.title       = element_text(face = "bold", hjust = 0.5)
+  )
+
+print(p)
 
