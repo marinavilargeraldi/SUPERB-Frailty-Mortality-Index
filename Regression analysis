@@ -1,4 +1,113 @@
-Regression analysis
+# -------------------------------------------------------------
+# Regression Analysis Script
+# Author: Marina Vilar Geraldi
+# Purpose: Run linear regressions
+# -------------------------------------------------------------
 
+# Load required packages
+  library(readr)
+  library(writexl)
+  library(lm.beta)
 
+# ----------------------- Inputs -------------------------
+# File paths
+file_path   <- "data/input_dataset.csv"
+output_path_main <- "results/linear_regression_results.xlsx"
+output_path_GR   <- "results/linear_regression_generichness.xlsx"
 
+# Read data
+data <- read_csv(file_path)
+
+# Define covariates (adjustment variables)
+adjustment_vars <- c("Age","Education","BMI","Smoking","Alcohol",
+                     "Statins","PPI","Metformin")
+adjustment_vars_main <- adjustment_vars
+
+# Sensitivity analysis: include gene richness
+adjustment_vars_sens <- c(adjustment_vars_main, "Gene_Richness")
+
+# Select dependent variables
+dependent_vars <- c("dependent1", "dependent2")  
+
+# Select independent variables
+independent_vars <- c("indep1", "indep2")  
+
+# ----------------------- Functions ---------------------------
+#' Run regression for one dependent variable across independents
+#' @param data #Input dataframe
+#' @param dependent_var  Dependent variable
+#' @param independent_vars Vector of independent variable
+#' @param adjustment_vars Vector of adjustment/covariate variable
+#' @return Data frame with regression results
+run_regression <- function(data, dependent_var, independent_vars, adjustment_vars) {
+  
+  results <- data.frame(
+    Independent_Variable = character(),
+    Beta_Coefficient     = numeric(),
+    Standardized_Beta    = numeric(),
+    P_Value              = numeric(),
+    R_Square             = numeric(),
+    CI_Lower             = numeric(),
+    CI_Upper             = numeric(),
+    Adjustment_Variables = character(),
+    stringsAsFactors     = FALSE
+  )
+  
+  for (indep_var in independent_vars) {
+if(length(unique(data[[indep_var]])) <= 1) next
+    formula <- as.formula(
+      paste(dependent_var, "~", indep_var, "+", paste(adjustment_vars, collapse = " + "))
+    )
+    
+    complete_data <- na.omit(data[, c(dependent_var, indep_var, adjustment_vars)])
+    
+    model <- tryCatch(lm(formula, data = complete_data), error = function(e) NULL)
+    
+    if (!is.null(model)) {
+      summary_model <- summary(model)
+      model_beta    <- lm.beta(model)
+      
+      if (indep_var %in% rownames(summary_model$coefficients)) {
+        beta_coef        <- summary_model$coefficients[indep_var, "Estimate"]
+        standardized_beta<- coef(model_beta)[indep_var]
+        p_value          <- summary_model$coefficients[indep_var, "Pr(>|t|)"]
+        r_square         <- summary_model$r.squared
+        
+        # 95% confidence interval
+        se       <- summary_model$coefficients[indep_var, "Std. Error"]
+        t_crit   <- qt(0.975, df = model$df.residual)
+        ci_lower <- beta_coef - (t_crit * se)
+        ci_upper <- beta_coef + (t_crit * se)
+        
+        results <- rbind(
+          results,
+          data.frame(
+            Independent_Variable = indep_var,
+            Beta_Coefficient     = beta_coef,
+            Standardized_Beta    = standardized_beta,
+            P_Value              = p_value,
+            R_Square             = r_square,
+            CI_Lower             = ci_lower,
+            CI_Upper             = ci_upper,
+            Adjustment_Variables = paste(adjustment_vars, collapse = ", ")
+          )
+        )
+      }
+    }
+  }
+  return(results)
+}
+# ----------------------- Main Script -------------------------
+# Run main analysis
+result_list_main <- lapply(dependent_vars, function(dep) {
+  run_regression(data, dep, independent_vars, adjustment_vars_main)
+})
+names(result_list_main) <- dependent_vars
+write_xlsx(result_list_main, output_path_main)
+
+# Run sensitivity analysis including gene richness
+result_list_sens <- lapply(dependent_vars, function(dep) {
+  run_regression(data, dep, independent_vars, adjustment_vars_sens)
+})
+names(result_list_sens) <- dependent_vars
+write_xlsx(result_list_sens, output_path_GR)
